@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bilibili 視頻下載器</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🎬 Bilibili 視頻下載器</h1>
+            <p class="subtitle">支援互動式視頻和隱藏片段下載</p>
+        </header>
+
+        <main class="main-content">
+            <!-- URL Input Section -->
+            <section class="input-section">
+                <div class="input-group">
+                    <label for="video-url">視頻鏈接</label>
+                    <input type="text" id="video-url" placeholder="請輸入 Bilibili 視頻鏈接 (支援 BV號、av號、短鏈接)" />
+                    <button id="parse-btn" class="btn btn-primary">解析視頻</button>
+                </div>
+                <div class="url-examples">
+                    <p>支援格式：</p>
+                    <small>
+                        • https://www.bilibili.com/video/BV1xx411c7mD<br>
+                        • https://www.bilibili.com/video/av123456<br>
+                        • https://b23.tv/abc123<br>
+                        • BV1xx411c7mD
+                    </small>
+                </div>
+            </section>
+
+            <!-- Video Info Section -->
+            <section id="video-info" class="video-info hidden">
+                <div class="video-card">
+                    <div class="video-thumbnail">
+                        <img id="video-cover" src="" alt="視頻封面" />
+                        <div class="video-duration" id="video-duration"></div>
+                    </div>
+                    <div class="video-details">
+                        <h3 id="video-title"></h3>
+                        <p class="video-author">UP主: <span id="video-author"></span></p>
+                        <p class="video-desc" id="video-desc"></p>
+                        <div class="video-stats">
+                            <span>👀 <span id="video-view"></span></span>
+                            <span>👍 <span id="video-like"></span></span>
+                            <span>💬 <span id="video-reply"></span></span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Interactive Video Notice -->
+                <div id="interactive-notice" class="interactive-notice hidden">
+                    <div class="notice-icon">🎮</div>
+                    <div class="notice-content">
+                        <h4>檢測到互動式視頻！</h4>
+                        <p>此視頻包含多個分支和可能的隱藏片段，我們將為您解析所有可用的分支路徑。</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Quality Selection -->
+            <section id="quality-section" class="quality-section hidden">
+                <h3>畫質選擇</h3>
+                <div class="quality-grid">
+                    <div class="quality-option">
+                        <label>
+                            <input type="radio" name="quality" value="120" checked>
+                            <span class="quality-label">超清 4K (120)</span>
+                            <span class="quality-desc">3840×2160</span>
+                        </label>
+                    </div>
+                    <div class="quality-option">
+                        <label>
+                            <input type="radio" name="quality" value="116">
+                            <span class="quality-label">高清 1080P60 (116)</span>
+                            <span class="quality-desc">1920×1080 60fps</span>
+                        </label>
+                    </div>
+                    <div class="quality-option">
+                        <label>
+                            <input type="radio" name="quality" value="80">
+                            <span class="quality-label">高清 1080P (80)</span>
+                            <span class="quality-desc">1920×1080</span>
+                        </label>
+                    </div>
+                    <div class="quality-option">
+                        <label>
+                            <input type="radio" name="quality" value="74">
+                            <span class="quality-label">高清 720P60 (74)</span>
+                            <span class="quality-desc">1280×720 60fps</span>
+                        </label>
+                    </div>
+                    <div class="quality-option">
+                        <label>
+                            <input type="radio" name="quality" value="64">
+                            <span class="quality-label">高清 720P (64)</span>
+                            <span class="quality-desc">1280×720</span>
+                        </label>
+                    </div>
+                    <div class="quality-option">
+                        <label>
+                            <input type="radio" name="quality" value="32">
+                            <span class="quality-label">清晰 480P (32)</span>
+                            <span class="quality-desc">854×480</span>
+                        </label>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Branch Selection for Interactive Videos -->
+            <section id="branch-section" class="branch-section hidden">
+                <h3>分支選擇</h3>
+                <div class="branch-container">
+                    <div class="branch-header">
+                        <button id="select-all-branches" class="btn btn-secondary">全選</button>
+                        <button id="clear-all-branches" class="btn btn-secondary">清空</button>
+                        <span class="branch-count">找到 <span id="branch-total">0</span> 個分支</span>
+                    </div>
+                    <div id="branch-list" class="branch-list">
+                        <!-- Branches will be populated here -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Download Section -->
+            <section id="download-section" class="download-section hidden">
+                <div class="download-controls">
+                    <button id="download-btn" class="btn btn-success">開始下載</button>
+                    <div class="download-options">
+                        <label>
+                            <input type="checkbox" id="merge-audio" checked>
+                            自動合併音頻
+                        </label>
+                        <label>
+                            <input type="checkbox" id="download-subtitle">
+                            下載字幕
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Progress Section -->
+                <div id="progress-container" class="progress-container hidden">
+                    <h4>下載進度</h4>
+                    <div id="progress-list" class="progress-list">
+                        <!-- Progress items will be added here -->
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Loading Overlay -->
+        <div id="loading-overlay" class="loading-overlay hidden">
+            <div class="loading-content">
+                <div class="spinner"></div>
+                <p id="loading-text">正在解析視頻...</p>
+            </div>
+        </div>
+
+        <!-- Error Messages -->
+        <div id="error-container" class="error-container hidden">
+            <div class="error-content">
+                <div class="error-icon">⚠️</div>
+                <h4>錯誤</h4>
+                <p id="error-message"></p>
+                <button id="close-error" class="btn btn-secondary">關閉</button>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <div class="legal-notice">
+                <h4>⚠️ 法律聲明</h4>
+                <p>本工具僅供個人學習和研究使用，請遵守相關法律法規和 Bilibili 服務條款。</p>
+                <p>下載的內容不得用於商業用途或侵犯版權。使用本工具下載視頻前，請確保您有合法的使用權。</p>
+            </div>
+            <div class="tech-info">
+                <p>🚀 特色功能：支援互動式視頻完整分支下載和隱藏片段發現</p>
+                <p>💡 技術支援：FFmpeg 自動合併，實時進度監控，反爬蟲優化</p>
+            </div>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
