@@ -235,9 +235,25 @@ class BilibiliDownloader {
         
         if (this.isInteractiveVideo) {
             this.displayBranches();
+            this.displayDiscoveryStats(data.discovery);
         }
         
         this.displayDownloadSection();
+    }
+
+    displayDiscoveryStats(discovery) {
+        if (!discovery) return;
+        
+        const interactiveNotice = document.getElementById('interactive-notice');
+        const noticeContent = interactiveNotice.querySelector('.notice-content p');
+        
+        noticeContent.innerHTML = `
+            此視頻包含<strong>${discovery.totalBranches}</strong>個分支片段，包括：<br>
+            • 主要分支：${discovery.mainBranches}個<br>
+            • 隱藏分支：${discovery.hiddenBranches}個<br>
+            • 最大深度：${discovery.maxDepth}層<br>
+            我們已為您解析所有可用的分支路徑和隱藏內容。
+        `;
     }
 
     displayVideoInfo() {
@@ -278,21 +294,25 @@ class BilibiliDownloader {
         branchList.innerHTML = '';
         branchTotal.textContent = this.branches.length;
 
-        this.branches.forEach(branch => {
-            const branchItem = document.createElement('div');
-            branchItem.className = 'branch-item';
-            branchItem.innerHTML = `
-                <label>
-                    <input type="checkbox" value="${branch.id}" class="branch-checkbox">
-                    <div>
-                        <div class="branch-title">${branch.title}</div>
-                        <div class="branch-desc">${branch.description}</div>
-                    </div>
-                </label>
-            `;
+        // Group branches by type for better organization
+        const mainBranches = this.branches.filter(b => !b.isHidden && !b.fromStoryAPI && !b.fromNodeAPI);
+        const hiddenBranches = this.branches.filter(b => b.isHidden);
+        const discoveredBranches = this.branches.filter(b => b.fromStoryAPI || b.fromNodeAPI);
 
-            branchList.appendChild(branchItem);
-        });
+        // Display main branches first
+        if (mainBranches.length > 0) {
+            this.addBranchGroup(branchList, '主要分支', mainBranches, 'main-branches');
+        }
+
+        // Display hidden branches
+        if (hiddenBranches.length > 0) {
+            this.addBranchGroup(branchList, '隱藏分支', hiddenBranches, 'hidden-branches');
+        }
+
+        // Display discovered branches from alternative APIs
+        if (discoveredBranches.length > 0) {
+            this.addBranchGroup(branchList, '發現的其他片段', discoveredBranches, 'discovered-branches');
+        }
 
         // Add event listeners for branch checkboxes
         document.querySelectorAll('.branch-checkbox').forEach(checkbox => {
@@ -302,6 +322,51 @@ class BilibiliDownloader {
         });
 
         section.classList.remove('hidden');
+    }
+
+    addBranchGroup(container, groupTitle, branches, groupClass) {
+        const groupDiv = document.createElement('div');
+        groupDiv.className = `branch-group ${groupClass}`;
+        
+        const groupHeader = document.createElement('h4');
+        groupHeader.className = 'branch-group-title';
+        groupHeader.textContent = `${groupTitle} (${branches.length})`;
+        groupDiv.appendChild(groupHeader);
+
+        branches.forEach(branch => {
+            const branchItem = document.createElement('div');
+            branchItem.className = 'branch-item';
+            
+            // Add path information for better context
+            const pathInfo = branch.path && branch.path !== 'root' ? `<div class="branch-path">路徑: ${branch.path}</div>` : '';
+            const depthInfo = branch.depth !== undefined ? `<span class="branch-depth">深度: ${branch.depth}</span>` : '';
+            const cidInfo = `<span class="branch-cid">CID: ${branch.cid}</span>`;
+            const conditionInfo = branch.condition ? `<div class="branch-condition">條件: ${branch.condition}</div>` : '';
+            
+            branchItem.innerHTML = `
+                <label>
+                    <input type="checkbox" value="${branch.id}" class="branch-checkbox">
+                    <div>
+                        <div class="branch-title">
+                            ${branch.title}
+                            ${branch.isHidden ? '<span class="hidden-badge">隱藏</span>' : ''}
+                            ${branch.isMain ? '<span class="main-badge">主線</span>' : ''}
+                        </div>
+                        <div class="branch-desc">${branch.description}</div>
+                        ${pathInfo}
+                        <div class="branch-meta">
+                            ${depthInfo}
+                            ${cidInfo}
+                        </div>
+                        ${conditionInfo}
+                    </div>
+                </label>
+            `;
+
+            groupDiv.appendChild(branchItem);
+        });
+
+        container.appendChild(groupDiv);
     }
 
     updateSelectedBranches() {
