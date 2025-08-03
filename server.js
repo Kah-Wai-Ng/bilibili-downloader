@@ -195,7 +195,22 @@ class BilibiliDownloader {
             };
         } catch (error) {
             console.error('Parse video info error:', error);
-            throw new Error(`Failed to parse video: ${error.message}`);
+            
+            // Provide more helpful error messages
+            let errorMessage = error.message;
+            if (error.code === 'EAI_AGAIN' || error.code === 'ENOTFOUND') {
+                errorMessage = '網絡連接失敗，請檢查網絡連接或稍後重試';
+            } else if (error.code === 'ECONNREFUSED') {
+                errorMessage = 'API 服務器連接被拒絕，可能是防爬蟲機制觸發';
+            } else if (error.response?.status === 403) {
+                errorMessage = '訪問被拒絕，可能需要更新User-Agent或添加認證';
+            } else if (error.response?.status === 404) {
+                errorMessage = '視頻不存在或已被刪除';
+            } else if (error.response?.status >= 500) {
+                errorMessage = 'Bilibili 服務器內部錯誤，請稍後重試';
+            }
+            
+            throw new Error(`Failed to parse video: ${errorMessage}`);
         }
     }
 
