@@ -180,14 +180,37 @@ class BilibiliDownloader {
                     bvid: videoInfo.bvid,
                     aid: videoInfo.aid,
                     cid: videoInfo.cid,
-                    is_stein_gate: isInteractiveVideo
+                    is_stein_gate: isInteractiveVideo,
+                    branches: branches // Include branches in videoInfo for frontend access
                 },
                 isInteractiveVideo,
-                branches
+                branches,
+                branchCount: branches.length,
+                discovery: {
+                    totalBranches: branches.length,
+                    mainBranches: branches.filter(b => !b.isHidden).length,
+                    hiddenBranches: branches.filter(b => b.isHidden).length,
+                    maxDepth: Math.max(...branches.map(b => b.depth || 0))
+                }
             };
         } catch (error) {
             console.error('Parse video info error:', error);
-            throw new Error(`Failed to parse video: ${error.message}`);
+            
+            // Provide more helpful error messages
+            let errorMessage = error.message;
+            if (error.code === 'EAI_AGAIN' || error.code === 'ENOTFOUND') {
+                errorMessage = '網絡連接失敗，請檢查網絡連接或稍後重試';
+            } else if (error.code === 'ECONNREFUSED') {
+                errorMessage = 'API 服務器連接被拒絕，可能是防爬蟲機制觸發';
+            } else if (error.response?.status === 403) {
+                errorMessage = '訪問被拒絕，可能需要更新User-Agent或添加認證';
+            } else if (error.response?.status === 404) {
+                errorMessage = '視頻不存在或已被刪除';
+            } else if (error.response?.status >= 500) {
+                errorMessage = 'Bilibili 服務器內部錯誤，請稍後重試';
+            }
+            
+            throw new Error(`Failed to parse video: ${errorMessage}`);
         }
     }
 
@@ -237,63 +260,231 @@ class BilibiliDownloader {
                 'Origin': 'https://www.bilibili.com'
             };
 
-            // Get interactive video edge info
-            const edgeUrl = `https://api.bilibili.com/x/stein/edgeinfo_v2?bvid=${bvid}&cid=${cid}`;
-            console.log('Fetching interactive branches from:', edgeUrl);
+            console.log(`Starting comprehensive branch discovery for bvid=${bvid}, root_cid=${cid}`);
             
+            // Use comprehensive branch discovery
+            const branches = await this.discoverAllBranches(bvid, cid, headers);
+            
+            console.log(`Discovered ${branches.length} total interactive branches`);
+            return branches;
+        } catch (error) {
+            console.error('Error getting interactive branches:', error);
+            return [];
+        }
+    }
+
+    async discoverAllBranches(bvid, rootCid, headers) {
+        const visitedCids = new Set();
+        const allBranches = [];
+        const cidQueue = [{ cid: rootCid, path: 'root', depth: 0 }];
+        
+        // Add main video as first branch
+        allBranches.push({
+            id: `main_${rootCid}`,
+            title: '主線劇情',
+            description: '默認播放的主線視頻',
+            cid: rootCid,
+            path: 'root',
+            depth: 0,
+            isMain: true
+        });
+        
+        visitedCids.add(rootCid);
+        
+        while (cidQueue.length > 0 && visitedCids.size < 50) { // Limit to prevent infinite loops
+            const { cid: currentCid, path: currentPath, depth } = cidQueue.shift();
+            
+            if (depth > 10) continue; // Prevent too deep recursion
+            
+            try {
+                console.log(`Exploring CID ${currentCid} at depth ${depth}, path: ${currentPath}`);
+                
+                // Get edge info for current CID
+                const edgeData = await this.getEdgeInfo(bvid, currentCid, headers);
+                if (!edgeData) continue;
+                
+                // Process edges and questions
+                const newBranches = this.processEdgeData(edgeData, currentPath, depth);
+                
+                for (const branch of newBranches) {
+                    // Avoid duplicate branches
+                    const existingBranch = allBranches.find(b => b.cid === branch.cid);
+                    if (!existingBranch) {
+                        allBranches.push(branch);
+                        
+                        // Add to queue for further exploration if not visited
+                        if (!visitedCids.has(branch.cid)) {
+                            visitedCids.add(branch.cid);
+                            cidQueue.push({
+                                cid: branch.cid,
+                                path: `${currentPath} → ${branch.title}`,
+                                depth: depth + 1
+                            });
+                        }
+                    }
+                }
+                
+                // Also try alternative API for this CID
+                await this.exploreAlternativeAPIs(bvid, currentCid, headers, allBranches, visitedCids, currentPath, depth + 1);
+                
+            } catch (error) {
+                console.warn(`Failed to explore CID ${currentCid}:`, error.message);
+            }
+            
+            // Small delay to avoid rate limiting
+            await this.delay(100);
+        }
+        
+        // Try to get more branches using different methods
+        await this.discoverHiddenSegments(bvid, headers, allBranches, visitedCids);
+        
+        return allBranches;
+    }
+    
+    async getEdgeInfo(bvid, cid, headers) {
+        try {
+            const edgeUrl = `https://api.bilibili.com/x/stein/edgeinfo_v2?bvid=${bvid}&cid=${cid}`;
             const response = await axios.get(edgeUrl, { 
                 headers,
-                timeout: 10000
+                timeout: 8000
             });
 
             if (response.data.code !== 0) {
-                console.warn('Failed to get interactive branches:', response.data.message);
-                return [];
+                console.warn(`Edge info failed for CID ${cid}:`, response.data.message);
+                return null;
             }
 
-            const edges = response.data.data?.edges || [];
-            const branches = [];
-
-            // Process each edge to create branch info
-            for (const edge of edges) {
-                if (edge.questions && edge.questions.length > 0) {
-                    for (const question of edge.questions) {
-                        if (question.choices && question.choices.length > 0) {
-                            for (const choice of question.choices) {
+            return response.data.data;
+        } catch (error) {
+            console.warn(`Error getting edge info for CID ${cid}:`, error.message);
+            return null;
+        }
+    }
+    
+    processEdgeData(edgeData, currentPath, depth) {
+        const branches = [];
+        const edges = edgeData?.edges || [];
+        
+        // Process regular edges and questions
+        for (const edge of edges) {
+            if (edge.questions && edge.questions.length > 0) {
+                for (const question of edge.questions) {
+                    if (question.choices && question.choices.length > 0) {
+                        for (const choice of question.choices) {
+                            if (choice.cid) {
                                 branches.push({
-                                    id: `branch_${choice.id}_${choice.cid}`,
-                                    title: choice.option || `選擇 ${choice.id}`,
-                                    description: question.title || '互動選擇分支',
+                                    id: `choice_${choice.id}_${choice.cid}`,
+                                    title: choice.option || `選擇項 ${choice.id}`,
+                                    description: `${question.title || '互動選擇'} - ${choice.option || '分支選項'}`,
                                     cid: choice.cid,
-                                    condition: choice.condition || null
+                                    path: currentPath,
+                                    depth: depth + 1,
+                                    condition: choice.condition || null,
+                                    questionId: question.id,
+                                    choiceId: choice.id
                                 });
                             }
                         }
                     }
                 }
             }
-
-            // Get hidden variables if available
-            const hiddenVars = response.data.data?.hidden_vars || [];
-            for (const hiddenVar of hiddenVars) {
-                if (hiddenVar.id_v2) {
-                    branches.push({
-                        id: `hidden_${hiddenVar.id_v2}`,
-                        title: `隱藏分支: ${hiddenVar.name || hiddenVar.id_v2}`,
-                        description: '需要特定條件解鎖的隱藏片段',
-                        cid: hiddenVar.id_v2,
-                        condition: hiddenVar.condition || null,
-                        isHidden: true
-                    });
+        }
+        
+        // Process hidden variables
+        const hiddenVars = edgeData?.hidden_vars || [];
+        for (const hiddenVar of hiddenVars) {
+            if (hiddenVar.id_v2) {
+                branches.push({
+                    id: `hidden_${hiddenVar.id_v2}`,
+                    title: `隱藏片段: ${hiddenVar.name || hiddenVar.id_v2}`,
+                    description: '需要特定條件解鎖的隱藏內容',
+                    cid: hiddenVar.id_v2,
+                    path: currentPath,
+                    depth: depth + 1,
+                    condition: hiddenVar.condition || null,
+                    isHidden: true,
+                    hiddenVarId: hiddenVar.id_v2
+                });
+            }
+        }
+        
+        return branches;
+    }
+    
+    async exploreAlternativeAPIs(bvid, cid, headers, allBranches, visitedCids, currentPath, depth) {
+        try {
+            // Try getting story graph API
+            const graphUrl = `https://api.bilibili.com/x/stein/nodeinfo?bvid=${bvid}&cid=${cid}`;
+            const graphResponse = await axios.get(graphUrl, { 
+                headers,
+                timeout: 5000
+            });
+            
+            if (graphResponse.data.code === 0 && graphResponse.data.data) {
+                const nodeData = graphResponse.data.data;
+                
+                // Process node edges if available
+                if (nodeData.edges && nodeData.edges.length > 0) {
+                    for (const edge of nodeData.edges) {
+                        if (edge.cid && !visitedCids.has(edge.cid)) {
+                            visitedCids.add(edge.cid);
+                            allBranches.push({
+                                id: `node_${edge.cid}`,
+                                title: edge.title || `節點分支 ${edge.cid}`,
+                                description: edge.description || '從節點圖發現的分支',
+                                cid: edge.cid,
+                                path: `${currentPath} → 節點`,
+                                depth: depth,
+                                fromNodeAPI: true
+                            });
+                        }
+                    }
                 }
             }
-
-            console.log(`Found ${branches.length} interactive branches`);
-            return branches;
         } catch (error) {
-            console.error('Error getting interactive branches:', error);
-            return [];
+            // Silently fail for alternative APIs
+            console.debug(`Alternative API exploration failed for CID ${cid}:`, error.message);
         }
+    }
+    
+    async discoverHiddenSegments(bvid, headers, allBranches, visitedCids) {
+        try {
+            // Try to get the complete interactive video structure
+            const storyUrl = `https://api.bilibili.com/x/stein/story?bvid=${bvid}`;
+            const storyResponse = await axios.get(storyUrl, { 
+                headers,
+                timeout: 8000
+            });
+            
+            if (storyResponse.data.code === 0 && storyResponse.data.data) {
+                const storyData = storyResponse.data.data;
+                
+                // Extract any additional CIDs from story data
+                if (storyData.story && storyData.story.nodes) {
+                    for (const node of storyData.story.nodes) {
+                        if (node.cid && !visitedCids.has(node.cid)) {
+                            visitedCids.add(node.cid);
+                            allBranches.push({
+                                id: `story_${node.cid}`,
+                                title: node.title || `故事節點 ${node.cid}`,
+                                description: node.description || '從故事結構發現的片段',
+                                cid: node.cid,
+                                path: 'story',
+                                depth: 0,
+                                fromStoryAPI: true,
+                                nodeId: node.node_id
+                            });
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.debug('Story API exploration failed:', error.message);
+        }
+    }
+    
+    delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 
     async startDownload(downloadData) {
@@ -424,13 +615,69 @@ class BilibiliDownloader {
 
     async getVideoStream(bvid, cid, quality) {
         const headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Referer': 'https://www.bilibili.com',
-            'Origin': 'https://www.bilibili.com'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': `https://www.bilibili.com/video/${bvid}`,
+            'Origin': 'https://www.bilibili.com',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
         };
 
-        const url = `https://api.bilibili.com/x/player/playurl?bvid=${bvid}&cid=${cid}&qn=${quality}&fnval=16&fourk=1`;
-        console.log('Fetching stream data from:', url);
+        console.log(`Fetching stream for bvid=${bvid}, cid=${cid}, quality=${quality}`);
+        
+        // Try multiple approaches to get stream URL
+        let streamData = null;
+        
+        // Approach 1: Standard playurl API with enhanced parameters
+        try {
+            streamData = await this.getStreamWithPlayurl(bvid, cid, quality, headers);
+        } catch (error) {
+            console.warn('Standard playurl API failed:', error.message);
+        }
+        
+        // Approach 2: Try with different fnval parameters for interactive videos
+        if (!streamData) {
+            try {
+                streamData = await this.getStreamWithEnhancedParams(bvid, cid, quality, headers);
+            } catch (error) {
+                console.warn('Enhanced params API failed:', error.message);
+            }
+        }
+        
+        // Approach 3: Try alternative API endpoint
+        if (!streamData) {
+            try {
+                streamData = await this.getStreamWithAlternativeAPI(bvid, cid, quality, headers);
+            } catch (error) {
+                console.warn('Alternative API failed:', error.message);
+            }
+        }
+        
+        if (!streamData) {
+            throw new Error('Unable to get video stream from any API endpoint');
+        }
+        
+        return streamData;
+    }
+    
+    async getStreamWithPlayurl(bvid, cid, quality, headers) {
+        const params = new URLSearchParams({
+            bvid: bvid,
+            cid: cid,
+            qn: quality,
+            fnval: '4048', // Enhanced fnval for better compatibility
+            fnver: '0',
+            fourk: '1',
+            session: this.generateSession(),
+            otype: 'json',
+            type: '',
+            ps: '1'
+        });
+        
+        const url = `https://api.bilibili.com/x/player/playurl?${params.toString()}`;
+        console.log('Trying standard playurl API:', url);
 
         const response = await axios.get(url, { 
             headers,
@@ -438,23 +685,116 @@ class BilibiliDownloader {
         });
 
         if (response.data.code !== 0) {
-            throw new Error(`Failed to get stream: ${response.data.message}`);
+            throw new Error(`API error: ${response.data.message}`);
         }
 
-        const data = response.data.data;
+        return this.parseStreamResponse(response.data.data, quality);
+    }
+    
+    async getStreamWithEnhancedParams(bvid, cid, quality, headers) {
+        const params = new URLSearchParams({
+            bvid: bvid,
+            cid: cid,
+            qn: quality,
+            fnval: '16', // Different fnval for interactive videos
+            fnver: '0',
+            fourk: '1',
+            session: this.generateSession(),
+            otype: 'json',
+            high_quality: '1',
+            platform: 'pc'
+        });
         
-        if (!data.dash || !data.dash.video || !data.dash.audio) {
-            throw new Error('Video stream not available');
+        const url = `https://api.bilibili.com/x/player/playurl?${params.toString()}`;
+        console.log('Trying enhanced params API:', url);
+
+        const response = await axios.get(url, { 
+            headers,
+            timeout: 15000
+        });
+
+        if (response.data.code !== 0) {
+            throw new Error(`API error: ${response.data.message}`);
         }
 
-        // Find best quality video
-        const video = data.dash.video.find(v => v.id === quality) || data.dash.video[0];
-        const audio = data.dash.audio[0]; // Use first audio stream
+        return this.parseStreamResponse(response.data.data, quality);
+    }
+    
+    async getStreamWithAlternativeAPI(bvid, cid, quality, headers) {
+        // Try the PUGV (premium) API which sometimes works for interactive videos
+        const params = new URLSearchParams({
+            avid: '', // Will be resolved from bvid
+            cid: cid,
+            qn: quality,
+            fnval: '4048',
+            fnver: '0',
+            fourk: '1',
+            bvid: bvid
+        });
+        
+        const url = `https://api.bilibili.com/pugv/player/web/playurl?${params.toString()}`;
+        console.log('Trying alternative PUGV API:', url);
 
-        return {
-            video: { url: video.baseUrl || video.base_url },
-            audio: { url: audio.baseUrl || audio.base_url }
-        };
+        const response = await axios.get(url, { 
+            headers,
+            timeout: 15000
+        });
+
+        if (response.data.code !== 0) {
+            throw new Error(`PUGV API error: ${response.data.message}`);
+        }
+
+        return this.parseStreamResponse(response.data.data, quality);
+    }
+    
+    parseStreamResponse(data, quality) {
+        console.log('Parsing stream response, looking for DASH streams...');
+        
+        // Handle DASH format (preferred for high quality)
+        if (data.dash && data.dash.video && data.dash.audio) {
+            console.log(`Found DASH streams: ${data.dash.video.length} video, ${data.dash.audio.length} audio`);
+            
+            // Find best quality video that matches requested quality
+            let video = data.dash.video.find(v => v.id === quality);
+            if (!video) {
+                // Fallback to highest available quality
+                video = data.dash.video.sort((a, b) => b.id - a.id)[0];
+                console.log(`Requested quality ${quality} not found, using ${video.id}`);
+            }
+            
+            const audio = data.dash.audio[0]; // Use first audio stream
+            
+            return {
+                video: { 
+                    url: video.baseUrl || video.base_url,
+                    quality: video.id,
+                    codec: video.codecs
+                },
+                audio: { 
+                    url: audio.baseUrl || audio.base_url,
+                    quality: audio.id,
+                    codec: audio.codecs
+                }
+            };
+        }
+        
+        // Handle legacy FLV format as fallback
+        if (data.durl && data.durl.length > 0) {
+            console.log('Found FLV streams, using as fallback');
+            const flvUrl = data.durl[0].url;
+            
+            return {
+                video: { url: flvUrl, quality: quality },
+                audio: { url: flvUrl, quality: quality } // Same URL for merged content
+            };
+        }
+        
+        throw new Error('No compatible video streams found in response');
+    }
+    
+    generateSession() {
+        // Generate a random session ID to potentially bypass some restrictions
+        return Math.random().toString(36).substring(2) + Date.now().toString(36);
     }
 
     async downloadFile(url, outputPath, downloadId, type) {

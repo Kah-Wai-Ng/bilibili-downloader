@@ -412,6 +412,93 @@ section h3 {
     background: rgba(0, 161, 214, 0.05);
 }
 
+/* Enhanced Branch Display */
+.branch-group {
+    margin-bottom: 25px;
+}
+
+.branch-group-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 15px;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border-left: 4px solid var(--primary-color);
+    border-radius: 4px;
+}
+
+.main-branches .branch-group-title {
+    border-left-color: var(--success-color);
+}
+
+.hidden-branches .branch-group-title {
+    border-left-color: var(--warning-color);
+}
+
+.discovered-branches .branch-group-title {
+    border-left-color: var(--secondary-color);
+}
+
+.branch-path {
+    font-size: 11px;
+    color: var(--text-light);
+    margin-top: 5px;
+    font-style: italic;
+}
+
+.branch-meta {
+    display: flex;
+    gap: 15px;
+    margin-top: 8px;
+    font-size: 10px;
+    color: var(--text-light);
+}
+
+.branch-depth, .branch-cid {
+    background: rgba(0, 0, 0, 0.05);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: monospace;
+}
+
+.branch-condition {
+    font-size: 11px;
+    color: var(--warning-color);
+    margin-top: 5px;
+    padding: 4px 8px;
+    background: rgba(250, 173, 20, 0.1);
+    border-radius: 4px;
+    border-left: 3px solid var(--warning-color);
+}
+
+.hidden-badge, .main-badge {
+    display: inline-block;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-weight: 500;
+    margin-left: 8px;
+}
+
+.hidden-badge {
+    background: var(--warning-color);
+    color: white;
+}
+
+.main-badge {
+    background: var(--success-color);
+    color: white;
+}
+
+.hidden-branches .branch-item {
+    border-left: 4px solid var(--warning-color);
+}
+
+.discovered-branches .branch-item {
+    border-left: 4px solid var(--secondary-color);
+}
+
 /* Download Section */
 .download-controls {
     display: flex;
